@@ -31,6 +31,19 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Patch Compose import
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/charlie/scriptwatch/MainActivity.kt')
+          s = p.read_text()
+          needle = 'import androidx.activity.ComponentActivity\n'
+          imp = 'import androidx.activity.compose.setContent\n'
+          if imp not in s:
+              s = s.replace(needle, needle + imp)
+              p.write_text(s)
+          PY
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
