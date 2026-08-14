@@ -31,24 +31,55 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Patch Compose import
+      - name: Patch app for build and login feedback
         run: |
           python - <<'PY'
           from pathlib import Path
           p = Path('app/src/main/java/com/charlie/scriptwatch/MainActivity.kt')
           s = p.read_text()
+
+          # Required Compose import.
           needle = 'import androidx.activity.ComponentActivity\n'
           imp = 'import androidx.activity.compose.setContent\n'
           if imp not in s:
               s = s.replace(needle, needle + imp)
-              p.write_text(s)
+
+          # Show immediate feedback when login is pressed.
+          old = '''    fun authorizeFor(script: ScriptConfig?, after: (String) -> Unit = {}) {\n        val extra = script?.extraScopes.orEmpty().split(',', '\\n', ' ')'''
+          new = '''    fun authorizeFor(script: ScriptConfig?, after: (String) -> Unit = {}) {\n        authStatus = "Connecting…"\n        val extra = script?.extraScopes.orEmpty().split(',', '\\n', ' ')'''
+          if old in s:
+              s = s.replace(old, new)
+
+          # Surface Google authorization failures on the button itself.
+          s = s.replace(
+              '.addOnFailureListener { authStatus = it.message ?: "Authorization failed" }',
+              '.addOnFailureListener { authStatus = "Login failed: ${it.message ?: it.javaClass.simpleName}" }'
+          )
+
+          # Surface cancellation instead of doing nothing.
+          old_launcher = '''        if (result.resultCode == Activity.RESULT_OK && result.data != null) {\n            runCatching {\n                Identity.getAuthorizationClient(activity).getAuthorizationResultFromIntent(result.data!!)\n            }.onSuccess(::handleAuthorization)\n             .onFailure { authStatus = it.message ?: "Authorization failed" }\n        }'''
+          new_launcher = '''        if (result.resultCode == Activity.RESULT_OK && result.data != null) {\n            runCatching {\n                Identity.getAuthorizationClient(activity).getAuthorizationResultFromIntent(result.data!!)\n            }.onSuccess(::handleAuthorization)\n             .onFailure { authStatus = "Login failed: ${it.message ?: it.javaClass.simpleName}" }\n        } else {\n            authStatus = "Login cancelled"\n        }'''
+          if old_launcher in s:
+              s = s.replace(old_launcher, new_launcher)
+
+          p.write_text(s)
           PY
 
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
+
+      - name: Export APK signing certificate
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | tee signing-certificate.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ScriptWatch-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload signing certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScriptWatch-signing-certificate
+          path: signing-certificate.txt
